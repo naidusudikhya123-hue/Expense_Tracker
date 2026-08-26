@@ -1,30 +1,31 @@
-from database import get_db
+from database import pool,init_db
 
 
 # =========================================================
 # CREATE
 # =========================================================
 
-def add_expense(
+async def add_expense(
+    user_id: str,
     date: str,
     amount: float,
     category: str,
     subcategory: str = "",
     note: str = ""
 ):
-    """
-    Add a new expense to the database.
-    """
+    """Add a new expense to the database."""
 
-    with get_db() as db:
+    async with pool.connection() as db:
 
-        cur = db.execute(
+        cur = await db.execute(
             """
             INSERT INTO expenses
-            (date, amount, category, subcategory, note)
-            VALUES (?, ?, ?, ?, ?)
+            (user_id,date, amount, category, subcategory, note)
+            VALUES (%s,%s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
+                user_id,
                 date,
                 amount,
                 category,
@@ -33,10 +34,14 @@ def add_expense(
             )
         )
 
-        expense_id = cur.lastrowid
+        row = await cur.fetchone()
+
+        await db.commit()
 
         return {
-            "id": expense_id,
+            "status": "created",
+            "id": row["id"],
+            "user_id":user_id,
             "date": date,
             "amount": amount,
             "category": category,
@@ -49,29 +54,29 @@ def add_expense(
 # READ ONE
 # =========================================================
 
-def get_expense(id: int):
-    """
-    Get one expense by ID.
-    """
+async def get_expense(user_id:str,id: int):
+    """Get one expense belonging to the authenticated user."""
 
-    with get_db() as db:
+    async with pool.connection() as db:
 
-        cur = db.execute(
+        cur = await db.execute(
             """
             SELECT
                 id,
+                user_id,
                 date,
                 amount,
                 category,
                 subcategory,
                 note
             FROM expenses
-            WHERE id = ?
+            WHERE id = %s
+            and user_id=%s
             """,
-            (id,)
+            (id,user_id)
         )
 
-        row = cur.fetchone()
+        row = await cur.fetchone()
 
         if row is None:
             return {
@@ -86,36 +91,38 @@ def get_expense(id: int):
 # READ MANY
 # =========================================================
 
-def list_expenses(
+async def list_expenses(
+    user_id:str,
     start_date: str,
     end_date: str
 ):
-    """
-    List expenses within a date range.
-    """
+    """List expenses within a date range."""
 
-    with get_db() as db:
+    async with pool.connection() as db:
 
-        cur = db.execute(
+        cur = await db.execute(
             """
             SELECT
                 id,
+                user_id,
                 date,
                 amount,
                 category,
                 subcategory,
                 note
             FROM expenses
-            WHERE date BETWEEN ? AND ?
+            where user_id=%s and
+            date BETWEEN %s AND %s
             ORDER BY date ASC, id ASC
             """,
             (
+                user_id,
                 start_date,
                 end_date
             )
         )
 
-        rows = cur.fetchall()
+        rows = await cur.fetchall()
 
         return [
             dict(row)
@@ -127,7 +134,8 @@ def list_expenses(
 # UPDATE
 # =========================================================
 
-def update_expense(
+async def update_expense(
+    user_id:str,
     id: int,
     date: str,
     amount: float,
@@ -135,39 +143,22 @@ def update_expense(
     subcategory: str = "",
     note: str = ""
 ):
-    """
-    Update an existing expense.
-    """
+    """Update an existing expense."""
 
-    with get_db() as db:
+    async with pool.connection() as db:
 
-        # Check whether expense exists
-        cur = db.execute(
-            """
-            SELECT id
-            FROM expenses
-            WHERE id = ?
-            """,
-            (id,)
-        )
-
-        if cur.fetchone() is None:
-            return {
-                "status": "error",
-                "message": f"Expense with id {id} not found"
-            }
-
-        # Update
-        db.execute(
+        cur = await db.execute(
             """
             UPDATE expenses
             SET
-                date = ?,
-                amount = ?,
-                category = ?,
-                subcategory = ?,
-                note = ?
-            WHERE id = ?
+                date = %s,
+                amount = %s,
+                category = %s,
+                subcategory = %s,
+                note = %s
+            WHERE id = %s and
+            user_id=%s
+            RETURNING id
             """,
             (
                 date,
@@ -175,13 +166,25 @@ def update_expense(
                 category,
                 subcategory,
                 note,
-                id
+                id,
+                user_id
             )
         )
+
+        row = await cur.fetchone()
+
+        if row is None:
+            return {
+                "status": "error",
+                "message": f"Expense with id {id} not found"
+            }
+
+        await db.commit()
 
         return {
             "status": "updated",
             "id": id,
+            "user_id":user_id,
             "date": date,
             "amount": amount,
             "category": category,
@@ -194,24 +197,22 @@ def update_expense(
 # DELETE
 # =========================================================
 
-def delete_expense(id: int):
-    """
-    Delete an expense by ID.
-    """
+async def delete_expense(user_id:str,id: int):
+    """Delete an expense by ID."""
 
-    with get_db() as db:
+    async with pool.connection() as db:
 
-        # Check whether expense exists
-        cur = db.execute(
+        cur = await db.execute(
             """
-            SELECT *
-            FROM expenses
-            WHERE id = ?
+            DELETE FROM expenses
+            WHERE id = %s and
+            user_id=%s
+            RETURNING id
             """,
-            (id,)
+            (id,user_id)
         )
 
-        row = cur.fetchone()
+        row = await cur.fetchone()
 
         if row is None:
             return {
@@ -219,15 +220,10 @@ def delete_expense(id: int):
                 "message": f"Expense with id {id} not found"
             }
 
-        db.execute(
-            """
-            DELETE FROM expenses
-            WHERE id = ?
-            """,
-            (id,)
-        )
+        await db.commit()
 
         return {
             "status": "deleted",
-            "id": id
+            "id": id,
+            "user_id":user_id
         }

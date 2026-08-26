@@ -1,31 +1,60 @@
 import os
-import sqlite3
+
+from psycopg_pool import AsyncConnectionPool
+from psycopg.rows import dict_row
 
 
-DB_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "expenses.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set"
+    )
+
+
+pool = AsyncConnectionPool(
+    conninfo=DATABASE_URL,
+    min_size=1,
+    max_size=5,
+    open=False,
+    kwargs={
+        "row_factory": dict_row
+    }
 )
 
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+async def init_db():
+
+    await pool.open()
+
+    # Wait until at least one connection is ready
+    await pool.wait()
+
+    print("PostgreSQL pool ready")
+
+    async with pool.connection() as db:
+
+        await db.execute(
+    """
+    CREATE TABLE IF NOT EXISTS expenses (
+        id SERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        date DATE NOT NULL,
+        amount NUMERIC(12, 2) NOT NULL,
+        category TEXT NOT NULL,
+        subcategory TEXT DEFAULT '',
+        note TEXT DEFAULT ''
+    )
+    """
+)
+
+        await db.commit()
+
+    print("Expenses table ready")
 
 
-def init_db():
-    with get_db() as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                amount REAL NOT NULL,
-                category TEXT NOT NULL,
-                subcategory TEXT DEFAULT '',
-                note TEXT DEFAULT ''
-            )
-        """)
+async def close_db():
 
+    await pool.close()
 
-init_db()
+    print("Pool closed")

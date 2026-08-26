@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+.venv/
+__pycache__/
+*.pyc
